@@ -4,26 +4,8 @@
 import pandas as pd
 import numpy as np
 import streamlit as st
-# Lightweight internal scaler to avoid sklearn dependency
-class SimpleScaler:
-    def fit_transform(self, x):
-        self.min = x.min(axis=0)
-        self.max = x.max(axis=0)
-        return (x - self.min) / (self.max - self.min + 1e-9)
-
-    def inverse_transform(self, x):
-        return x * (self.max - self.min + 1e-9) + self.min
-
-# Simple neural style regression using numpy (sklearn removed)
-def simple_regressor_train(X, y):
-    # basic linear regression fallback using numpy
-    try:
-        w = np.linalg.pinv(X) @ y
-        return w
-    except Exception as e:
-        return None
-
-
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.neural_network import MLPRegressor
 import requests
 from datetime import datetime
 from tvDatafeed import TvDatafeed, Interval
@@ -62,7 +44,7 @@ timeframes = st.multiselect("Timeframes", list(TIMEFRAME_MAP.keys()), default=["
 # ===== ADVANCED DATA FETCHER =====
 def load_tv_data(symbol, timeframe, candles=400):
     try:
-        data = tv.get_hist(symbol=symbol, exchange='FX_IDC', interval=TIMEFRAME_MAP[timeframe], n_bars=candles)
+        data = tv.get_hist(symbol=symbol, exchange='OANDA', interval=TIMEFRAME_MAP[timeframe], n_bars=candles)
         data = data.reset_index()
         data.rename(columns={'open':'Open','high':'High','low':'Low','close':'Close','datetime':'time'}, inplace=True)
         return data
@@ -109,41 +91,32 @@ def detect_candlestick(data):
 
 # ===== AI ENGINE – MULTI FEATURE LEARNING =====
 def train_ai_model(data):
-    if data is None or len(data) < 60:
+    if data is None or len(data)<60:
         return None
 
     features = data[['Close','Momentum','Volatility','Range']].dropna()
-
-    scaler = SimpleScaler()
+    scaler = MinMaxScaler()
 
     try:
-        scaled = scaler.fit_transform(features.values)
-    except Exception as e:
+        scaled = scaler.fit_transform(features)
+    except Exception:
         return None
 
-    X, y = [], []
-
-    for i in range(10, len(scaled)):
+    X,y = [],[]
+    for i in range(10,len(scaled)):
         X.append(scaled[i-10:i].flatten())
         y.append(scaled[i,0])
 
-    if len(X) == 0:
+    if len(X)==0:
         return None
 
-    X = np.array(X)
-    y = np.array(y)
-
-    weights = simple_regressor_train(X, y)
-
-    if weights is None:
-        return None
+    X,y = np.array(X), np.array(y)
 
     try:
-        pred = X[-1] @ weights
-        inv = scaler.inverse_transform(np.array([[pred,0,0,0]]))
-        return inv[0][0]
-    except Exception as e:
-        retur
+        model = MLPRegressor(hidden_layer_sizes=(128,64,32), max_iter=400)
+        model.fit(X,y)
+        pred = model.predict(scaled[-10:].flatten().reshape(1,-1))
+        return scaler.inverse_transform([[pred[0],0,0,0]])[0][0]
     except Exception:
         return None
 
